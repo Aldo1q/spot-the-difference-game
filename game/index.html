@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tideglass Observatory — Spot the Difference</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<header id="hud">
+  <div class="brand">
+    <div class="brand-name">🌙 Tideglass Observatory</div>
+    <div class="brand-sub" id="scene-label">The Brass Dome · Scene 1 of 12</div>
+  </div>
+  <div class="counter" aria-label="differences remaining">
+    <span id="remaining-count">7</span>
+    <span class="counter-word">LEFT</span>
+    <div id="pips" class="pips" aria-hidden="true"></div>
+  </div>
+  <div class="meters">
+    <div class="timer-wrap">
+      <div class="timer-text">⏳ <span id="timer-text">2:30</span></div>
+      <div class="timer-bar"><div id="timer-fill"></div></div>
+    </div>
+    <div class="meter">⭐ Score <b id="score">0</b></div>
+    <div class="meter">🔥 Streak <b id="streak">×0</b></div>
+    <div class="meter">🕯️ <b id="lives">♥♥♥</b></div>
+  </div>
+  <nav class="actions">
+    <button id="btn-hint" type="button">💡 Hint (3) · −150</button>
+    <button id="btn-zoom-out" type="button" aria-label="zoom out">−</button>
+    <span id="zoom-label">1.0×</span>
+    <button id="btn-zoom-in" type="button" aria-label="zoom in">+</button>
+    <button id="btn-map" type="button">🗺️ Map</button>
+    <button id="btn-pause" type="button">⏸ Pause</button>
+    <button id="btn-mute" type="button">🔊</button>
+  </nav>
+</header>
+
+<main id="panels">
+  <figure class="panel">
+    <canvas id="panel-left" width="600" height="450"></canvas>
+    <figcaption>◀ ORIGINAL</figcaption>
+  </figure>
+  <figure class="panel">
+    <canvas id="panel-right" width="600" height="450"></canvas>
+    <figcaption>ALTERED ▶</figcaption>
+  </figure>
+</main>
+
+<p id="help">Click a difference in either picture · Scroll to zoom, drag to pan when zoomed · <b>H</b> hint · <b>P</b> pause · <b>M</b> mute · <b>R</b> restart scene · 12 scenes · 84 differences · 3 districts</p>
+<div id="toast" role="status" aria-live="polite"></div>
+<p id="status" role="status" aria-live="polite"></p>
+
+<section id="overlay" hidden>
+  <div id="overlay-card">
+    <div id="ov-map" class="ov-pane" hidden>
+      <h1>🌙 Tideglass Observatory</h1>
+      <p class="ov-sub">A clockwork observatory above a flooded night city. Twelve scenes, eighty-four differences, three districts. Find all 7 in each scene before the lantern light runs out — three wrong guesses douse it.</p>
+      <div id="map-districts"></div>
+      <p class="ov-total">Total score: <b id="map-total">0</b> · Best play is saved on this device.</p>
+    </div>
+    <div id="ov-clear" class="ov-pane" hidden>
+      <h1>✨ Scene Clear!</h1>
+      <p class="ov-stars" id="clear-stars">★★★</p>
+      <p id="clear-lines" class="ov-lines"></p>
+      <div class="ov-buttons">
+        <button id="btn-next" type="button">Next scene ▶</button>
+        <button id="btn-clear-map" type="button">🗺️ Map</button>
+      </div>
+    </div>
+    <div id="ov-fail" class="ov-pane" hidden>
+      <h1>🕯️ The Light Went Out</h1>
+      <p id="fail-reason" class="ov-lines"></p>
+      <div class="ov-buttons">
+        <button id="btn-retry" type="button">↻ Try this scene again</button>
+        <button id="btn-fail-map" type="button">🗺️ Map</button>
+      </div>
+    </div>
+    <div id="ov-win" class="ov-pane" hidden>
+      <h1>🏆 Observatory Restored!</h1>
+      <p class="ov-lines" id="win-lines"></p>
+      <div class="ov-buttons">
+        <button id="btn-win-map" type="button">🗺️ Map — replay any scene</button>
+      </div>
+    </div>
+    <div id="ov-pause" class="ov-pane" hidden>
+      <h1>⏸ Paused</h1>
+      <p class="ov-lines">The lanterns wait for no one — except now.</p>
+      <div class="ov-buttons">
+        <button id="btn-resume" type="button">▶ Resume</button>
+        <button id="btn-pause-map" type="button">🗺️ Map</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
