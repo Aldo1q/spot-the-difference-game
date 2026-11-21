@@ -1,273 +1,205 @@
-// Tideglass Observatory — game engine: scenes, timer, lives, hints, streaks,
-// scoring, zoom & pan, the district progress map, and win / lose flow.
-// Rendering is delegated to painter.js; all state lives in this class and is
-// mirrored into the DOM HUD by syncHud().
+// Tideglass Observatory — game state and rules.
+// Owns the campaign: district map with unlocks, per-scene timer, lives,
+// mistake penalties, hints, streak scoring, stars and saved bests. Rendering
+// and input live in main.js; this module is the rules only, so the shot
+// staging in shots.js can drive exactly the same state a player gets.
 
-import { SCENES, DISTRICTS } from './scenes.js';
-import { drawScene, SCENE_W, SCENE_H } from './painter.js';
-import { SoundBank } from './audio.js';
+import { DISTRICTS, SCENES, objectById } from './scenes.js';
 
 export const SCREEN_MAP = 'map';
 export const SCREEN_PLAY = 'play';
 export const SCREEN_CLEAR = 'clear';
-export const SCREEN_FAIL = 'fail';
-export const SCREEN_WIN = 'win';
+export const SCREEN_OVER = 'over';
+export const SCREEN_VICTORY = 'victory';
 
-const HINTS_PER_SCENE = 3;
-const LIVES_PER_SCENE = 3;
-const HINT_COST = 150;
-const MISTAKE_COST = 25;
-const MISTAKE_TIME_PENALTY = 5;
-const FIND_BASE = 100;
+export const FOUND_POINTS = 100;
+export const MISTAKE_POINTS = 25;
+export const MISTAKE_SECONDS = 5;
+export const HINT_COST = 150;
+export const HINTS_PER_SCENE = 3;
+export const START_LIVES = 3;
 
-export class SpotGame {
-  constructor(ui) {
-    this.ui = ui;
-    this.sound = new SoundBank();
-    this.screen = SCREEN_MAP;
-    this.sceneIndex = 0;
-    this.unlocked = 1;
-    this.stars = new Array(SCENES.length).fill(0);
-    this.sceneScores = new Array(SCENES.length).fill(0);
-    this.totalScore = 0;
-    this.zoom = 1;
-    this.pan = { x: 0, y: 0 };
-    this.resetSceneState();
-    this.loadProgress();
-  }
+const BESTS_KEY = 'tideglass-observatory-bests-v1';
 
-  resetSceneState() {
-    this.found = new Set();
-    this.lives = LIVES_PER_SCENE;
-    this.hintsLeft = HINTS_PER_SCENE;
-    this.streak = 0;
-    this.bestStreak = 0;
-    this.mistakes = 0;
-    this.hintsUsed = 0;
-    this.timeLeft = 0;
-    this.elapsed = 0;
-    this.hintId = null;
-    this.hintUntil = 0;
-    this.lastMiss = null;
-    this.sceneScore = 0;
-    this.paused = false;
-  }
+export function loadBests() {
+  try {
+    const raw = localStorage.getItem(BESTS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (err) { /* storage unavailable: play without saved bests */ }
+  return {};
+}
 
-  get scene() {
-    return SCENES[this.sceneIndex];
-  }
+export function saveBests(bests) {
+  try {
+    localStorage.setItem(BESTS_KEY, JSON.stringify(bests));
+  } catch (err) { /* storage unavailable: ignore */ }
+}
 
-  get remaining() {
-    return this.scene.diffs.length - this.found.size;
-  }
+/** Stars for a finished scene: base star for clearing, plus time and lives. */
+export function starsFor(state) {
+  let stars = 1;
+  if (state.timeLeft >= state.scene.timeLimit * 0.3) stars += 1;
+  if (state.lives >= 2 && state.hintsUsed === 0) stars += 1;
+  return stars;
+}
 
-  loadProgress() {
-    try {
-      const raw = localStorage.getItem('tideglass-progress');
-      if (!raw) return;
-      const data = JSON.parse(raw);
-      this.unlocked = Math.min(SCENES.length, Math.max(1, data.unlocked | 0));
-      if (Array.isArray(data.stars)) this.stars = data.stars.slice(0, SCENES.length);
-      if (Array.isArray(data.scores)) this.sceneScores = data.scores.slice(0, SCENES.length);
-      this.totalScore = this.sceneScores.reduce((a, b) => a + (b | 0), 0);
-    } catch {
-      /* a fresh observatory */
+/** A scene is unlocked when every earlier scene has a saved clear. */
+export function isUnlocked(index, bests) {
+  if (index === 0) return true;
+  const prev = SCENES[index - 1];
+  return Boolean(bests[prev.id]);
+}
+
+export function districtOf(sceneIndex) {
+  return SCENES[sceneIndex].district;
+}
+
+export function districtScenes(district) {
+  const out = [];
+  SCENES.forEach((s, i) => { if (s.district === district) out.push(i); });
+  return out;
+}
+
+export function createGame() {
+  return {
+    screen: SCREEN_MAP,
+    bests: loadBests(),
+    totalScore: 0,
+    sceneIndex: 0,
+    scene: null,
+    found: new Set(),
+    lives: START_LIVES,
+    score: 0,
+    streak: 0,
+    bestStreak: 0,
+    timeLeft: 0,
+    hintsLeft: HINTS_PER_SCENE,
+    hintsUsed: 0,
+    hintTarget: null,
+    hintUntil: 0,
+    mistakes: 0,
+    lastFindAt: 0,
+    clearInfo: null,
+  };
+}
+
+/** Begin a scene fresh: full timer, full lives, nothing found. */
+export function startScene(game, index) {
+  const scene = SCENES[index];
+  game.sceneIndex = index;
+  game.scene = scene;
+  game.found = new Set();
+  game.lives = START_LIVES;
+  game.score = 0;
+  game.streak = 0;
+  game.bestStreak = 0;
+  game.timeLeft = scene.timeLimit;
+  game.hintsLeft = HINTS_PER_SCENE;
+  game.hintsUsed = 0;
+  game.hintTarget = null;
+  game.mistakes = 0;
+  game.clearInfo = null;
+  game.screen = SCREEN_PLAY;
+  return game;
+}
+
+/** Remaining differences of the current scene, in data order. */
+export function remainingDiffs(game) {
+  return game.scene.diffs.filter((d) => !game.found.has(d.target));
+}
+
+/**
+ * Judge a click given in panel coordinates. Returns 'found', 'already',
+ * 'miss' or 'ignored'. Each miss costs points and time, resets the streak,
+ * and every third miss also costs a life.
+ */
+export function clickAt(game, x, y) {
+  if (game.screen !== SCREEN_PLAY) return 'ignored';
+  for (const d of game.scene.diffs) {
+    const o = objectById(game.scene, d.target);
+    if (!o) continue;
+    const dx = x - o.x;
+    const dy = y - o.y;
+    if (dx * dx + dy * dy <= d.r * d.r) {
+      if (game.found.has(d.target)) return 'already';
+      game.found.add(d.target);
+      game.streak += 1;
+      game.bestStreak = Math.max(game.bestStreak, game.streak);
+      const gain = FOUND_POINTS * (1 + Math.min(game.streak - 1, 4) * 0.25);
+      game.score += Math.round(gain);
+      game.lastFindAt = performance.now();
+      if (game.hintTarget === d.target) game.hintTarget = null;
+      if (game.found.size >= game.scene.diffs.length) finishScene(game, true);
+      return 'found';
     }
   }
+  game.streak = 0;
+  game.mistakes += 1;
+  game.score = Math.max(0, game.score - MISTAKE_POINTS);
+  game.timeLeft = Math.max(0, game.timeLeft - MISTAKE_SECONDS);
+  if (game.mistakes % 3 === 0) game.lives -= 1;
+  if (game.lives <= 0) finishScene(game, false);
+  return 'miss';
+}
 
-  saveProgress() {
-    try {
-      localStorage.setItem('tideglass-progress', JSON.stringify({
-        unlocked: this.unlocked, stars: this.stars, scores: this.sceneScores,
-      }));
-    } catch {
-      /* storage unavailable */
-    }
-  }
+/** Spend a hint: reveal one remaining difference for a point cost. */
+export function useHint(game, now) {
+  if (game.screen !== SCREEN_PLAY || game.hintsLeft <= 0) return null;
+  const rest = remainingDiffs(game);
+  if (!rest.length) return null;
+  game.hintsLeft -= 1;
+  game.hintsUsed += 1;
+  game.score = Math.max(0, game.score - HINT_COST);
+  game.hintTarget = rest[0].target;
+  game.hintUntil = now + 2600;
+  return game.hintTarget;
+}
 
-  startScene(index) {
-    this.sceneIndex = index;
-    this.resetSceneState();
-    this.timeLeft = this.scene.time;
-    this.zoom = 1;
-    this.pan = { x: 0, y: 0 };
-    this.screen = SCREEN_PLAY;
-    this.sound.ensure();
-    this.sound.startAmbience();
-    this.syncHud();
-    this.showOverlay(null);
-  }
-
-  /** Seconds tick: drains the timer, expires hints, ends the scene at zero. */
-  tick(dt) {
-    if (this.screen !== SCREEN_PLAY || this.paused) return;
-    this.elapsed += dt;
-    this.timeLeft -= dt;
-    if (this.hintId && performance.now() > this.hintUntil) this.hintId = null;
-    if (this.timeLeft <= 0) {
-      this.timeLeft = 0;
-      this.failScene('The lantern light ran out.');
-    }
-  }
-
-  /**
-   * A click in scene coordinates on either panel. Returns 'found', 'already'
-   * or 'miss'. A miss costs a life, time and score, and breaks the streak.
-   */
-  clickAt(x, y) {
-    if (this.screen !== SCREEN_PLAY || this.paused) return null;
-    for (const diff of this.scene.diffs) {
-      const dx = x - diff.x;
-      const dy = y - diff.y;
-      if (dx * dx + dy * dy <= (diff.r + 8) * (diff.r + 8)) {
-        if (this.found.has(diff.id)) {
-          this.sound.playClick();
-          this.ui.toast(`Already found: ${diff.note}`);
-          return 'already';
-        }
-        this.found.add(diff.id);
-        if (this.hintId === diff.id) this.hintId = null;
-        this.streak += 1;
-        this.bestStreak = Math.max(this.bestStreak, this.streak);
-        const gained = FIND_BASE + 25 * Math.min(this.streak - 1, 4) + Math.ceil(this.timeLeft / 10);
-        this.sceneScore += gained;
-        this.sound.playFind(this.streak);
-        this.ui.toast(`Found: ${diff.note}  +${gained}`);
-        if (this.remaining === 0) this.clearScene();
-        this.syncHud();
-        return 'found';
-      }
-    }
-    this.mistakes += 1;
-    this.streak = 0;
-    this.lives -= 1;
-    this.timeLeft = Math.max(0, this.timeLeft - MISTAKE_TIME_PENALTY);
-    this.sceneScore = Math.max(0, this.sceneScore - MISTAKE_COST);
-    this.lastMiss = { x, y, until: performance.now() + 450 };
-    this.sound.playMistake();
-    this.ui.toast(this.lives > 0 ? `Not there — a lantern gutters. ${this.lives} left.` : 'The last lantern gutters…');
-    if (this.lives <= 0) this.failScene('Three wrong guesses doused the lanterns.');
-    this.syncHud();
-    return 'miss';
-  }
-
-  /** Spend score to pulse the next unfound difference for two seconds. */
-  useHint() {
-    if (this.screen !== SCREEN_PLAY || this.paused) return;
-    if (this.hintsLeft <= 0) {
-      this.ui.toast('No hints left in this scene.');
-      return;
-    }
-    const next = this.scene.diffs.find((diff) => !this.found.has(diff.id));
-    if (!next) return;
-    this.hintsLeft -= 1;
-    this.hintsUsed += 1;
-    this.sceneScore = Math.max(0, this.sceneScore - HINT_COST);
-    this.hintId = next.id;
-    this.hintUntil = performance.now() + 2200;
-    this.sound.playHint();
-    this.ui.toast(`A hint glimmers… (−${HINT_COST})`);
-    this.syncHud();
-  }
-
-  starsForScene() {
-    let stars = 1;
-    if (this.mistakes === 0) stars += 1;
-    if (this.hintsUsed === 0 && this.timeLeft > this.scene.time * 0.25) stars += 1;
-    return stars;
-  }
-
-  clearScene() {
-    const timeBonus = Math.ceil(this.timeLeft) * 2;
-    this.sceneScore += timeBonus;
-    this.lastClear = {
-      timeBonus,
-      stars: this.starsForScene(),
-      score: this.sceneScore,
-    };
-    this.stars[this.sceneIndex] = Math.max(this.stars[this.sceneIndex], this.lastClear.stars);
-    this.sceneScores[this.sceneIndex] = Math.max(this.sceneScores[this.sceneIndex], this.sceneScore);
-    this.totalScore = this.sceneScores.reduce((a, b) => a + b, 0);
-    this.unlocked = Math.max(this.unlocked, Math.min(SCENES.length, this.sceneIndex + 2));
-    this.saveProgress();
-    if (this.sceneIndex === SCENES.length - 1) {
-      this.screen = SCREEN_WIN;
-      this.sound.playCampaignWin();
-      this.showOverlay('win');
-    } else {
-      this.screen = SCREEN_CLEAR;
-      this.sound.playSceneClear();
-      this.showOverlay('clear');
-    }
-    this.syncHud();
-  }
-
-  failScene(reason) {
-    this.screen = SCREEN_FAIL;
-    this.failReason = reason;
-    this.sound.playFail();
-    this.showOverlay('fail');
-    this.syncHud();
-  }
-
-  setZoom(zoom, centre) {
-    const clamped = Math.min(2.5, Math.max(1, zoom));
-    if (centre && clamped !== this.zoom) {
-      const ratio = clamped / this.zoom;
-      this.pan.x = centre.x - (centre.x - this.pan.x) * ratio;
-      this.pan.y = centre.y - (centre.y - this.pan.y) * ratio;
-    }
-    this.zoom = clamped;
-    this.clampPan();
-    this.syncHud();
-  }
-
-  clampPan() {
-    const maxX = SCENE_W * (this.zoom - 1);
-    const maxY = SCENE_H * (this.zoom - 1);
-    this.pan.x = Math.min(0, Math.max(-maxX, this.pan.x));
-    this.pan.y = Math.min(0, Math.max(-maxY, this.pan.y));
-  }
-
-  /** Convert a point inside a panel canvas element to scene coordinates. */
-  toScene(clientX, clientY, rect) {
-    const px = ((clientX - rect.left) / rect.width) * SCENE_W;
-    const py = ((clientY - rect.top) / rect.height) * SCENE_H;
-    return { x: (px - this.pan.x) / this.zoom, y: (py - this.pan.y) / this.zoom };
-  }
-
-  /** Draw both panels with the shared zoom/pan transform and miss marks. */
-  render(nowMs) {
-    for (const side of ['left', 'right']) {
-      const canvas = side === 'left' ? this.ui.canvasLeft : this.ui.canvasRight;
-      const ctx = canvas.getContext('2d');
-      ctx.save();
-      ctx.translate(this.pan.x, this.pan.y);
-      ctx.scale(this.zoom, this.zoom);
-      drawScene(ctx, this.scene, side, this.found, this.hintId, nowMs);
-      if (this.lastMiss && nowMs < this.lastMiss.until) {
-        const { x, y } = this.lastMiss;
-        ctx.strokeStyle = '#ff5a5a';
-        ctx.lineWidth = 4;
-        ctx.lineCap = 'round';
-        ctx.beginPath();
-        ctx.moveTo(x - 10, y - 10);
-        ctx.lineTo(x + 10, y + 10);
-        ctx.moveTo(x + 10, y - 10);
-        ctx.lineTo(x - 10, y + 10);
-        ctx.stroke();
-      }
-      ctx.restore();
-    }
-  }
-
-  showOverlay(name) {
-    this.ui.showOverlay(name, this);
-  }
-
-  syncHud() {
-    this.ui.syncHud(this);
+/** Advance the timer; running out of time ends the scene. */
+export function tick(game, dtSeconds) {
+  if (game.screen !== SCREEN_PLAY) return;
+  game.timeLeft -= dtSeconds;
+  if (game.timeLeft <= 0) {
+    game.timeLeft = 0;
+    finishScene(game, false);
   }
 }
 
-export { DISTRICTS, SCENES };
+function finishScene(game, won) {
+  if (won) {
+    const timeBonus = Math.round(game.timeLeft) * 2;
+    const lifeBonus = game.lives * 50;
+    const stars = starsFor(game);
+    game.clearInfo = {
+      won: true,
+      stars,
+      base: game.score,
+      timeBonus,
+      lifeBonus,
+      total: game.score + timeBonus + lifeBonus,
+    };
+    game.score = game.clearInfo.total;
+    game.totalScore += game.score;
+    const prev = game.bests[game.scene.id];
+    if (!prev || game.score > prev.score) {
+      game.bests[game.scene.id] = { score: game.score, stars };
+      saveBests(game.bests);
+    }
+    const allDone = SCENES.every((s) => game.bests[s.id]);
+    game.screen = allDone ? SCREEN_VICTORY : SCREEN_CLEAR;
+  } else {
+    game.clearInfo = { won: false, stars: 0, base: game.score, timeBonus: 0, lifeBonus: 0, total: game.score };
+    game.screen = SCREEN_OVER;
+  }
+}
+
+/** Campaign progress summary for the map screen. */
+export function campaignSummary(game) {
+  let cleared = 0;
+  let stars = 0;
+  for (const s of SCENES) {
+    const b = game.bests[s.id];
+    if (b) { cleared += 1; stars += b.stars || 0; }
+  }
+  return { cleared, stars, districts: DISTRICTS.length, scenes: SCENES.length };
+}

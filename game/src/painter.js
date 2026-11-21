@@ -1,20 +1,10 @@
-// Tideglass Observatory — scene painter.
-// Every picture is drawn procedurally on a 600x450 canvas from the scene data in
-// scenes.js, so the left (original) and right (altered) panels are pixel-exact
-// apart from the seven planted differences. A difference mutates one object:
-// it vanishes, appears, changes colour, flips, or swaps a detail parameter.
+// Tideglass Observatory — procedural painter.
+// All art is drawn from scene data on a 2D canvas: no image files, so the
+// left and right panels can never drift apart except where a difference
+// says so. Each object kind has one small painter below; drawPanel renders
+// a whole panel for one side, applying the scene's differences on the right.
 
-export const SCENE_W = 600;
-export const SCENE_H = 450;
-
-/** Deterministic 0..1 hash from an integer seed, for ambient decor. */
-export function seededRandom(seed) {
-  let state = (seed * 2654435761) >>> 0;
-  return function next() {
-    state = (state * 1664525 + 1013904223) >>> 0;
-    return state / 4294967296;
-  };
-}
+import { PANEL_H, PANEL_W } from './scenes.js';
 
 function circle(ctx, x, y, r, fill) {
   ctx.beginPath();
@@ -23,675 +13,434 @@ function circle(ctx, x, y, r, fill) {
   ctx.fill();
 }
 
-function roundRect(ctx, x, y, w, h, r, fill) {
+function line(ctx, x1, y1, x2, y2, stroke, width) {
   ctx.beginPath();
-  ctx.roundRect(x, y, w, h, r);
-  ctx.fillStyle = fill;
-  ctx.fill();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = width;
+  ctx.stroke();
 }
 
-/** One object kind, drawn centred on (0,0) at unit size, scaled by the caller. */
-const OBJECT_DRAWERS = {
-  gear(ctx, o) {
-    const teeth = o.n ?? 8;
-    ctx.fillStyle = o.c;
+function rect(ctx, x, y, w, h, fill) {
+  ctx.fillStyle = fill;
+  ctx.fillRect(x, y, w, h);
+}
+
+function hand(ctx, cx, cy, angleDeg, len, stroke, width) {
+  const a = ((angleDeg - 90) * Math.PI) / 180;
+  line(ctx, cx, cy, cx + Math.cos(a) * len, cy + Math.sin(a) * len, stroke, width);
+}
+
+const PAINTERS = {
+  dome(ctx, o, p) {
+    const s = p.size || 180;
+    ctx.beginPath();
+    ctx.arc(o.x, o.y + s * 0.28, s / 2, Math.PI, 0);
+    ctx.fillStyle = p.color;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    for (let i = -2; i <= 2; i += 1) {
+      line(ctx, o.x + i * s * 0.18, o.y + s * 0.28, o.x + i * s * 0.1, o.y - s * 0.34, 'rgba(0,0,0,0.22)', 2);
+    }
+    rect(ctx, o.x - s / 2, o.y + s * 0.28, s, 8, 'rgba(0,0,0,0.3)');
+    circle(ctx, o.x, o.y - s * 0.52, 7, '#ffe9a8');
+    line(ctx, o.x, o.y - s * 0.36, o.x, o.y - s * 0.48, '#ffe9a8', 3);
+  },
+
+  arch(ctx, o, p) {
+    const s = p.size || 280;
+    ctx.beginPath();
+    ctx.arc(o.x, o.y, s / 2, Math.PI, 0);
+    ctx.lineTo(o.x + s / 2, o.y + s * 0.62);
+    ctx.lineTo(o.x - s / 2, o.y + s * 0.62);
+    ctx.closePath();
+    ctx.fillStyle = p.color;
+    ctx.globalAlpha = 0.5;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(o.x, o.y, s * 0.34, Math.PI, 0);
+    ctx.strokeStyle = 'rgba(255,233,168,0.5)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+  },
+
+  tower(ctx, o, p) {
+    const s = p.size || 200;
+    rect(ctx, o.x - s * 0.16, o.y - s * 0.4, s * 0.32, s * 0.8, p.color);
+    ctx.beginPath();
+    ctx.moveTo(o.x - s * 0.22, o.y - s * 0.4);
+    ctx.lineTo(o.x, o.y - s * 0.62);
+    ctx.lineTo(o.x + s * 0.22, o.y - s * 0.4);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fill();
+    rect(ctx, o.x - 9, o.y - s * 0.18, 18, 26, '#ffe9a8');
+    rect(ctx, o.x - 7, o.y + s * 0.12, 14, 20, 'rgba(0,0,0,0.4)');
+  },
+
+  clock(ctx, o, p) {
+    const s = p.size || 60;
+    circle(ctx, o.x, o.y, s / 2 + 5, p.color);
+    circle(ctx, o.x, o.y, s / 2, '#f6efdc');
+    for (let i = 0; i < 12; i += 1) {
+      const a = (i * Math.PI) / 6;
+      const r1 = s / 2 - 5;
+      const r2 = s / 2 - (i % 3 === 0 ? 11 : 8);
+      line(ctx, o.x + Math.cos(a) * r2, o.y + Math.sin(a) * r2, o.x + Math.cos(a) * r1, o.y + Math.sin(a) * r1, '#3a3125', 2);
+    }
+    hand(ctx, o.x, o.y, ((p.hour || 0) % 12) * 30 + (p.min || 0) * 0.5, s * 0.26, '#2c2418', 5);
+    hand(ctx, o.x, o.y, (p.min || 0) * 6, s * 0.4, '#2c2418', 3);
+    circle(ctx, o.x, o.y, 4, '#8a5a24');
+  },
+
+  gear(ctx, o, p) {
+    const s = p.size || 44;
+    const teeth = p.teeth || 8;
+    ctx.save();
+    ctx.translate(o.x, o.y);
+    ctx.fillStyle = p.color;
     for (let i = 0; i < teeth; i += 1) {
       ctx.save();
-      ctx.rotate(((Math.PI * 2) / teeth) * i + (o.rot ?? 0));
-      ctx.fillRect(-4, -26, 8, 12);
+      ctx.rotate((i * Math.PI * 2) / teeth);
+      ctx.fillRect(-s * 0.09, -s * 0.62, s * 0.18, s * 0.24);
       ctx.restore();
     }
-    circle(ctx, 0, 0, 19, o.c);
-    circle(ctx, 0, 0, 10, o.c2 ?? '#20242e');
-    circle(ctx, 0, 0, 4, o.c);
-  },
-  lantern(ctx, o) {
-    ctx.strokeStyle = '#0d0f14';
-    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(0, -34);
-    ctx.lineTo(0, -18);
-    ctx.stroke();
-    if (o.lit !== false) {
-      const glow = ctx.createRadialGradient(0, 0, 2, 0, 0, 30);
-      glow.addColorStop(0, 'rgba(255,214,120,0.55)');
-      glow.addColorStop(1, 'rgba(255,214,120,0)');
-      ctx.fillStyle = glow;
-      ctx.fillRect(-32, -32, 64, 64);
-    }
-    ctx.beginPath();
-    ctx.moveTo(-9, -18);
-    ctx.lineTo(9, -18);
-    ctx.lineTo(13, 12);
-    ctx.lineTo(-13, 12);
-    ctx.closePath();
-    ctx.fillStyle = o.c;
-    ctx.fill();
-    ctx.fillStyle = o.lit === false ? '#39404d' : '#ffd678';
-    ctx.fillRect(-7, -11, 14, 17);
-    roundRect(ctx, -11, 12, 22, 5, 2, '#0d0f14');
-  },
-  star4(ctx, o) {
-    ctx.beginPath();
-    const r = 16;
-    const q = 4.5;
-    ctx.moveTo(0, -r);
-    ctx.quadraticCurveTo(q, -q, r, 0);
-    ctx.quadraticCurveTo(q, q, 0, r);
-    ctx.quadraticCurveTo(-q, q, -r, 0);
-    ctx.quadraticCurveTo(-q, -q, 0, -r);
-    ctx.closePath();
-    ctx.fillStyle = o.c;
-    ctx.fill();
-    circle(ctx, 0, 0, 3, '#fff6d8');
-  },
-  moon(ctx, o) {
-    // Crescent via an even-odd path: the offset disc cuts the bite out of the
-    // filled shape itself, never out of whatever was painted underneath.
-    ctx.beginPath();
-    ctx.arc(0, 0, 17, 0, Math.PI * 2);
-    ctx.arc(8, -5, 14, 0, Math.PI * 2);
-    ctx.fillStyle = o.c;
-    ctx.fill('evenodd');
-  },
-  clock(ctx, o) {
-    circle(ctx, 0, 0, 20, '#e8dfc8');
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = o.c;
-    ctx.beginPath();
-    ctx.arc(0, 0, 20, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.strokeStyle = '#2b2b26';
-    ctx.lineWidth = 2;
-    for (let i = 0; i < 12; i += 1) {
-      const a = (Math.PI / 6) * i;
-      ctx.beginPath();
-      ctx.moveTo(Math.sin(a) * 15, -Math.cos(a) * 15);
-      ctx.lineTo(Math.sin(a) * 18, -Math.cos(a) * 18);
-      ctx.stroke();
-    }
-    const [hour, minute] = o.t ?? [10, 10];
-    const ha = ((hour % 12) + minute / 60) * (Math.PI / 6);
-    const ma = minute * (Math.PI / 30);
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(Math.sin(ha) * 10, -Math.cos(ha) * 10);
-    ctx.stroke();
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(Math.sin(ma) * 15, -Math.cos(ma) * 15);
-    ctx.stroke();
-    circle(ctx, 0, 0, 2.5, o.c);
-  },
-  bottle(ctx, o) {
-    ctx.beginPath();
-    ctx.moveTo(-5, -22);
-    ctx.lineTo(5, -22);
-    ctx.lineTo(5, -8);
-    ctx.quadraticCurveTo(13, -2, 13, 8);
-    ctx.lineTo(13, 20);
-    ctx.quadraticCurveTo(13, 24, 9, 24);
-    ctx.lineTo(-9, 24);
-    ctx.quadraticCurveTo(-13, 24, -13, 20);
-    ctx.lineTo(-13, 8);
-    ctx.quadraticCurveTo(-13, -2, -5, -8);
-    ctx.closePath();
-    ctx.fillStyle = o.c;
-    ctx.fill();
-    const level = (o.n ?? 5) / 10;
-    ctx.fillStyle = o.c2 ?? '#7fd4ff';
-    ctx.fillRect(-10, 24 - 30 * level, 20, 30 * level - 2);
-    roundRect(ctx, -5, -28, 10, 7, 2, '#c9a06a');
-  },
-  book(ctx, o) {
-    roundRect(ctx, -16, -6, 32, 13, 2, o.c);
-    roundRect(ctx, -14, -17, 28, 11, 2, o.c2 ?? '#7a4a8c');
-    ctx.fillStyle = '#efe6cf';
-    ctx.fillRect(-16, -8, 32, 2.5);
-    ctx.fillRect(-14, -19, 28, 2.5);
-    ctx.fillStyle = '#f5c542';
-    ctx.fillRect(6, -17, 4, 11);
-  },
-  key(ctx, o) {
-    ctx.strokeStyle = o.c;
-    ctx.lineWidth = 5;
-    ctx.beginPath();
-    ctx.arc(-10, 0, 8, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(-3, 0);
-    ctx.lineTo(18, 0);
-    ctx.moveTo(12, 0);
-    ctx.lineTo(12, 8);
-    ctx.moveTo(18, 0);
-    ctx.lineTo(18, 9);
-    ctx.stroke();
-  },
-  compass(ctx, o) {
-    circle(ctx, 0, 0, 18, '#e8dfc8');
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = o.c;
-    ctx.beginPath();
-    ctx.arc(0, 0, 18, 0, Math.PI * 2);
-    ctx.stroke();
-    const a = o.rot ?? -0.6;
-    ctx.fillStyle = '#c33';
-    ctx.beginPath();
-    ctx.moveTo(Math.sin(a) * 13, -Math.cos(a) * 13);
-    ctx.lineTo(Math.sin(a + 2.6) * 6, -Math.cos(a + 2.6) * 6);
-    ctx.lineTo(Math.sin(a - 2.6) * 6, -Math.cos(a - 2.6) * 6);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = '#335';
-    ctx.beginPath();
-    const b = a + Math.PI;
-    ctx.moveTo(Math.sin(b) * 13, -Math.cos(b) * 13);
-    ctx.lineTo(Math.sin(b + 2.6) * 6, -Math.cos(b + 2.6) * 6);
-    ctx.lineTo(Math.sin(b - 2.6) * 6, -Math.cos(b - 2.6) * 6);
-    ctx.closePath();
-    ctx.fill();
-  },
-  candle(ctx, o) {
-    const h = 14 + (o.n ?? 3) * 4;
-    roundRect(ctx, -7, 20 - h, 14, h, 3, o.c);
-    ctx.beginPath();
-    ctx.ellipse(0, 14 - h, 5, 9, 0, 0, Math.PI * 2);
-    ctx.fillStyle = '#ffb347';
-    ctx.fill();
-    circle(ctx, 0, 16 - h, 2.5, '#fff3b0');
-    roundRect(ctx, -13, 19, 26, 5, 2, '#8a6d3b');
-  },
-  crystal(ctx, o) {
-    ctx.beginPath();
-    ctx.moveTo(0, -22);
-    ctx.lineTo(13, -6);
-    ctx.lineTo(8, 20);
-    ctx.lineTo(-8, 20);
-    ctx.lineTo(-13, -6);
-    ctx.closePath();
-    ctx.fillStyle = o.c;
+    ctx.arc(0, 0, s * 0.44, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
-    ctx.moveTo(0, -22);
-    ctx.lineTo(4, 20);
-    ctx.lineTo(-4, 20);
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.arc(0, 0, s * 0.18, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
     ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(-13, -6);
-    ctx.lineTo(13, -6);
-    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-  },
-  shell(ctx, o) {
-    ctx.fillStyle = o.c;
-    ctx.beginPath();
-    ctx.moveTo(0, 20);
-    ctx.bezierCurveTo(-22, 12, -20, -14, 0, -18);
-    ctx.bezierCurveTo(20, -14, 22, 12, 0, 20);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(60,30,20,0.45)';
-    ctx.lineWidth = 2;
-    for (let i = 1; i <= 4; i += 1) {
-      ctx.beginPath();
-      ctx.moveTo(-16 + i * 2, 14 - i * 2);
-      ctx.quadraticCurveTo(0, -6 - i * 2, 16 - i * 2, 14 - i * 2);
-      ctx.stroke();
-    }
-    circle(ctx, 0, -14, 3.5, o.c2 ?? '#fff1d6');
-  },
-  fish(ctx, o) {
-    ctx.fillStyle = o.c;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 19, 10, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(15, 0);
-    ctx.lineTo(26, -10);
-    ctx.lineTo(26, 10);
-    ctx.closePath();
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(-2, -8);
-    ctx.quadraticCurveTo(4, -16, 10, -8);
-    ctx.closePath();
-    ctx.fillStyle = o.c2 ?? o.c;
-    ctx.fill();
-    circle(ctx, -10, -2, 2.6, '#10131a');
-  },
-  bird(ctx, o) {
-    ctx.fillStyle = o.c;
-    ctx.beginPath();
-    ctx.ellipse(0, 2, 13, 8, -0.25, 0, Math.PI * 2);
-    ctx.fill();
-    circle(ctx, 11, -5, 6, o.c);
-    ctx.beginPath();
-    ctx.moveTo(16, -5);
-    ctx.lineTo(23, -3);
-    ctx.lineTo(16, -1);
-    ctx.closePath();
-    ctx.fillStyle = '#f5c542';
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(-10, 0);
-    ctx.lineTo(-24, -8);
-    ctx.lineTo(-20, 4);
-    ctx.lineTo(-26, 8);
-    ctx.closePath();
-    ctx.fillStyle = o.c;
-    ctx.fill();
-    circle(ctx, 12, -6, 1.6, '#10131a');
-  },
-  bell(ctx, o) {
-    ctx.beginPath();
-    ctx.moveTo(0, -18);
-    ctx.quadraticCurveTo(14, -16, 14, 2);
-    ctx.quadraticCurveTo(14, 12, 19, 15);
-    ctx.lineTo(-19, 15);
-    ctx.quadraticCurveTo(-14, 12, -14, 2);
-    ctx.quadraticCurveTo(-14, -16, 0, -18);
-    ctx.closePath();
-    ctx.fillStyle = o.c;
-    ctx.fill();
-    circle(ctx, 0, 20, 4.5, o.c2 ?? '#8a6d3b');
-    circle(ctx, 0, -20, 3, '#8a6d3b');
-  },
-  plant(ctx, o) {
-    const leaves = o.n ?? 4;
-    ctx.strokeStyle = '#3f9e4d';
-    ctx.lineWidth = 3;
-    for (let i = 0; i < leaves; i += 1) {
-      const a = -Math.PI / 2 + (i - (leaves - 1) / 2) * 0.5;
-      ctx.beginPath();
-      ctx.moveTo(0, 6);
-      ctx.quadraticCurveTo(Math.cos(a) * 12, 6 + Math.sin(a) * 12, Math.cos(a) * 19, 6 + Math.sin(a) * 21);
-      ctx.stroke();
-      circle(ctx, Math.cos(a) * 19, 6 + Math.sin(a) * 21, 4, '#57c96b');
-    }
-    ctx.beginPath();
-    ctx.moveTo(-11, 6);
-    ctx.lineTo(11, 6);
-    ctx.lineTo(8, 22);
-    ctx.lineTo(-8, 22);
-    ctx.closePath();
-    ctx.fillStyle = o.c;
-    ctx.fill();
-  },
-  telescope(ctx, o) {
-    ctx.save();
-    ctx.rotate(o.rot ?? -0.5);
-    roundRect(ctx, -24, -6, 48, 12, 6, o.c);
-    roundRect(ctx, 14, -8, 16, 16, 4, o.c2 ?? '#8a6d3b');
     ctx.restore();
-    ctx.strokeStyle = '#2c2f38';
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(0, 4);
-    ctx.lineTo(-11, 24);
-    ctx.moveTo(0, 4);
-    ctx.lineTo(11, 24);
-    ctx.moveTo(0, 4);
-    ctx.lineTo(0, 24);
-    ctx.stroke();
   },
-  globe(ctx, o) {
-    circle(ctx, 0, -2, 17, o.c);
-    ctx.strokeStyle = 'rgba(16,32,48,0.55)';
-    ctx.lineWidth = 1.6;
-    ctx.beginPath();
-    ctx.ellipse(0, -2, 7, 17, 0, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(-17, -2);
-    ctx.lineTo(17, -2);
-    ctx.moveTo(-14, -11);
-    ctx.lineTo(14, -11);
-    ctx.moveTo(-14, 7);
-    ctx.lineTo(14, 7);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(0, 15);
-    ctx.lineTo(0, 20);
-    ctx.moveTo(-10, 23);
-    ctx.lineTo(10, 23);
-    ctx.strokeStyle = '#8a6d3b';
-    ctx.lineWidth = 3;
-    ctx.stroke();
+
+  telescope(ctx, o, p) {
+    const tilt = ((p.tilt || -30) * Math.PI) / 180;
+    ctx.save();
+    ctx.translate(o.x, o.y);
+    line(ctx, 0, 6, -14, 44, '#3c4654', 5);
+    line(ctx, 0, 6, 14, 44, '#3c4654', 5);
+    ctx.rotate(tilt);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(-52, -10, 92, 20);
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.fillRect(28, -10, 12, 20);
+    ctx.fillStyle = '#2c3644';
+    ctx.fillRect(-60, -7, 10, 14);
+    ctx.restore();
   },
-  cup(ctx, o) {
-    ctx.strokeStyle = 'rgba(255,255,255,0.65)';
-    ctx.lineWidth = 2;
-    const steam = o.n ?? 2;
-    for (let i = 0; i < steam; i += 1) {
-      const sx = -6 + i * (12 / Math.max(1, steam - 1 || 1));
-      ctx.beginPath();
-      ctx.moveTo(sx, -12);
-      ctx.quadraticCurveTo(sx + 4, -18, sx, -24);
-      ctx.stroke();
+
+  lantern(ctx, o, p) {
+    line(ctx, o.x, o.y - 30, o.x, o.y - 14, '#20242c', 3);
+    rect(ctx, o.x - 13, o.y - 14, 26, 34, '#20242c');
+    if (p.lit) {
+      const g = ctx.createRadialGradient(o.x, o.y + 3, 2, o.x, o.y + 3, 30);
+      g.addColorStop(0, 'rgba(255,214,110,0.95)');
+      g.addColorStop(1, 'rgba(255,214,110,0)');
+      circle(ctx, o.x, o.y + 3, 30, g);
+      rect(ctx, o.x - 8, o.y - 8, 16, 22, p.color);
+    } else {
+      rect(ctx, o.x - 8, o.y - 8, 16, 22, 'rgba(160,170,180,0.35)');
     }
-    ctx.beginPath();
-    ctx.moveTo(-14, -10);
-    ctx.lineTo(14, -10);
-    ctx.quadraticCurveTo(13, 10, 6, 12);
-    ctx.lineTo(-6, 12);
-    ctx.quadraticCurveTo(-13, 10, -14, -10);
-    ctx.closePath();
-    ctx.fillStyle = o.c;
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(17, -2, 6, -Math.PI / 2, Math.PI / 2);
-    ctx.strokeStyle = o.c;
-    ctx.lineWidth = 3.5;
-    ctx.stroke();
-    roundRect(ctx, -16, 14, 32, 4, 2, o.c2 ?? '#8a6d3b');
+    rect(ctx, o.x - 15, o.y + 20, 30, 5, '#20242c');
   },
-  scroll(ctx, o) {
-    roundRect(ctx, -20, -11, 40, 22, 9, '#efe3c2');
-    roundRect(ctx, -20, -11, 40, 6, 3, '#e0cfa0');
-    roundRect(ctx, -20, 5, 40, 6, 3, '#e0cfa0');
-    ctx.strokeStyle = o.c;
+
+  candle(ctx, o, p) {
+    const h = p.height || 28;
+    rect(ctx, o.x - 8, o.y + 20 - h, 16, h, p.color);
+    rect(ctx, o.x - 13, o.y + 18, 26, 5, '#6b5636');
+    if (p.lit) {
+      ctx.beginPath();
+      ctx.ellipse(o.x, o.y + 8 - h, 5, 9, 0, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffb347';
+      ctx.fill();
+      circle(ctx, o.x, o.y + 10 - h, 2.5, '#fff3c4');
+    }
+    line(ctx, o.x, o.y + 16 - h, o.x, o.y + 12 - h, '#3a3125', 2);
+  },
+
+  bottle(ctx, o, p) {
+    const s = p.size || 36;
+    const fill = Math.max(0, Math.min(1, p.fill == null ? 0.5 : p.fill));
+    ctx.beginPath();
+    ctx.moveTo(o.x - 5, o.y - s * 0.62);
+    ctx.lineTo(o.x + 5, o.y - s * 0.62);
+    ctx.lineTo(o.x + 5, o.y - s * 0.3);
+    ctx.quadraticCurveTo(o.x + s * 0.34, o.y - s * 0.1, o.x + s * 0.3, o.y + s * 0.42);
+    ctx.lineTo(o.x - s * 0.3, o.y + s * 0.42);
+    ctx.quadraticCurveTo(o.x - s * 0.34, o.y - s * 0.1, o.x - 5, o.y - s * 0.3);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(190,225,235,0.4)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(230,245,250,0.7)';
     ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(-12, -1);
-    ctx.lineTo(8, -1);
-    ctx.moveTo(-12, 3);
-    ctx.lineTo(2, 3);
     ctx.stroke();
-    ctx.fillStyle = o.c;
-    ctx.fillRect(12, -8, 4, 16);
+    ctx.save();
+    ctx.clip();
+    rect(ctx, o.x - s * 0.32, o.y + s * 0.44 - fill * s * 0.72, s * 0.64, fill * s * 0.72, p.color);
+    ctx.restore();
+    rect(ctx, o.x - 6, o.y - s * 0.72, 12, 8, '#8a6a42');
   },
-  mushroom(ctx, o) {
-    ctx.beginPath();
-    ctx.arc(0, 2, 19, Math.PI, 0);
-    ctx.quadraticCurveTo(19, 8, 10, 8);
-    ctx.lineTo(-10, 8);
-    ctx.quadraticCurveTo(-19, 8, -19, 2);
-    ctx.closePath();
-    ctx.fillStyle = o.c;
-    ctx.fill();
-    const spots = o.n ?? 3;
-    ctx.fillStyle = '#fff4e0';
-    const spotAt = [[-9, -4], [4, -9], [11, 0], [-2, -1], [-14, 1]];
-    for (let i = 0; i < spots; i += 1) circle(ctx, spotAt[i][0], spotAt[i][1], 2.8, '#fff4e0');
-    roundRect(ctx, -6, 8, 12, 13, 4, '#efe3c2');
-  },
-  anchor(ctx, o) {
-    ctx.strokeStyle = o.c;
-    ctx.lineWidth = 4.5;
-    ctx.beginPath();
-    ctx.arc(0, -15, 5, 0, Math.PI * 2);
-    ctx.moveTo(0, -10);
-    ctx.lineTo(0, 16);
-    ctx.moveTo(-11, -4);
-    ctx.lineTo(11, -4);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(-16, 6);
-    ctx.quadraticCurveTo(-15, 19, 0, 20);
-    ctx.quadraticCurveTo(15, 19, 16, 6);
-    ctx.moveTo(-16, 6);
-    ctx.lineTo(-11, 12);
-    ctx.moveTo(16, 6);
-    ctx.lineTo(11, 12);
-    ctx.stroke();
-  },
-  kite(ctx, o) {
-    ctx.beginPath();
-    ctx.moveTo(0, -20);
-    ctx.lineTo(13, -4);
-    ctx.lineTo(0, 16);
-    ctx.lineTo(-13, -4);
-    ctx.closePath();
-    ctx.fillStyle = o.c;
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(0, -20);
-    ctx.lineTo(0, 16);
-    ctx.moveTo(-13, -4);
-    ctx.lineTo(13, -4);
-    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    ctx.strokeStyle = o.c2 ?? '#d9d4c5';
-    ctx.beginPath();
-    ctx.moveTo(0, 16);
-    ctx.quadraticCurveTo(6, 24, 0, 30);
-    ctx.stroke();
-  },
-  orb(ctx, o) {
-    const glow = ctx.createRadialGradient(0, -4, 2, 0, -4, 26);
-    glow.addColorStop(0, 'rgba(160,230,255,0.5)');
-    glow.addColorStop(1, 'rgba(160,230,255,0)');
-    ctx.fillStyle = glow;
-    ctx.fillRect(-28, -32, 56, 56);
-    circle(ctx, 0, -4, 13, o.c);
-    circle(ctx, -4, -8, 4, 'rgba(255,255,255,0.7)');
-    ctx.beginPath();
-    ctx.moveTo(-9, 8);
-    ctx.lineTo(9, 8);
-    ctx.lineTo(5, 18);
-    ctx.lineTo(-5, 18);
-    ctx.closePath();
-    ctx.fillStyle = '#8a6d3b';
-    ctx.fill();
-    roundRect(ctx, -11, 18, 22, 4, 2, '#5d4a26');
+
+  compass(ctx, o, p) {
+    const s = p.size || 30;
+    circle(ctx, o.x, o.y, s / 2 + 4, '#5e4a22');
+    circle(ctx, o.x, o.y, s / 2, '#f3ecd8');
+    for (let i = 0; i < 4; i += 1) hand(ctx, o.x, o.y, i * 90, s * 0.4, '#9a8a68', 2);
+    hand(ctx, o.x, o.y, p.needle || 0, s * 0.42, '#b03a30', 4);
+    hand(ctx, o.x, o.y, (p.needle || 0) + 180, s * 0.3, '#33506e', 4);
+    circle(ctx, o.x, o.y, 3.5, '#5e4a22');
   },
 };
 
-/** Draw one object, honouring flip and scale, in scene coordinates. */
-export function drawObject(ctx, o) {
-  const draw = OBJECT_DRAWERS[o.kind];
-  if (!draw) return;
-  ctx.save();
-  ctx.translate(o.x, o.y);
-  if (o.flip) ctx.scale(-1, 1);
-  const s = o.s ?? 1;
-  ctx.scale(s, s);
-  if (o.rot && (o.kind === 'gear')) ctx.rotate(0); // gear uses rot internally
-  draw(ctx, o);
-  ctx.restore();
-}
-
-/** The right-hand variant of an object: apply its difference mutation, if any. */
-export function variantOf(o, diff) {
-  if (!diff) return o;
-  if (diff.type === 'color') return { ...o, c: diff.to };
-  if (diff.type === 'detail') return { ...o, ...(diff.alt ?? {}) };
-  if (diff.type === 'flip') return { ...o, flip: !o.flip };
-  return o;
-}
-
-/** Paint the backdrop: sky, structure silhouette, floor or floodwater, decor. */
-export function drawBackground(ctx, scene) {
-  const grad = ctx.createLinearGradient(0, 0, 0, SCENE_H);
-  grad.addColorStop(0, scene.sky[0]);
-  grad.addColorStop(0.62, scene.sky[1]);
-  grad.addColorStop(1, scene.sky[2]);
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, SCENE_W, SCENE_H);
-
-  const rand = seededRandom(scene.seed);
-  ctx.fillStyle = 'rgba(255,246,216,0.85)';
-  for (let i = 0; i < 42; i += 1) {
-    const x = rand() * SCENE_W;
-    const y = rand() * 190;
-    const r = rand() * 1.5 + 0.4;
-    ctx.globalAlpha = 0.25 + rand() * 0.6;
-    ctx.fillRect(x, y, r, r);
-  }
-  ctx.globalAlpha = 1;
-
-  ctx.fillStyle = scene.silhouette;
-  if (scene.structure === 'dome') {
+// Second half of the painter table: scenery and dressing objects.
+Object.assign(PAINTERS, {
+  window(ctx, o, p) {
+    const s = p.size || 32;
+    rect(ctx, o.x - s / 2, o.y - s / 2, s, s * 1.2, p.color);
+    ctx.strokeStyle = '#4a3b28';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(o.x - s / 2, o.y - s / 2, s, s * 1.2);
+    line(ctx, o.x, o.y - s / 2, o.x, o.y + s * 0.7, '#4a3b28', 3);
+    line(ctx, o.x - s / 2, o.y + s * 0.1, o.x + s / 2, o.y + s * 0.1, '#4a3b28', 3);
     ctx.beginPath();
-    ctx.arc(300, 330, 215, Math.PI, 0);
+    ctx.arc(o.x, o.y - s / 2, s / 2, Math.PI, 0);
+    ctx.fillStyle = p.color;
     ctx.fill();
-    ctx.fillRect(85, 322, 430, 14);
-    for (let i = 0; i < 7; i += 1) ctx.fillRect(104 + i * 66, 336, 16, 74);
-    circle(ctx, 300, 108, 13, scene.silhouette);
-    ctx.fillRect(297, 118, 6, 22);
-  } else if (scene.structure === 'arches') {
-    // One even-odd silhouette: a solid arcade wall with four arch openings
-    // cut out of the path itself, so the sky shows through untouched.
-    ctx.beginPath();
-    ctx.rect(0, 130, SCENE_W, 282);
-    for (let i = 0; i < 4; i += 1) {
-      const x = 30 + i * 148;
-      ctx.moveTo(x, 412);
-      ctx.lineTo(x, 300);
-      ctx.arc(x + 55, 300, 55, Math.PI, 0);
-      ctx.lineTo(x + 110, 412);
-      ctx.closePath();
+  },
+
+  railing(ctx, o, p) {
+    const w = p.size || 520;
+    line(ctx, o.x - w / 2, o.y, o.x + w / 2, o.y, p.color, 6);
+    for (let x = o.x - w / 2 + 14; x < o.x + w / 2; x += 34) {
+      line(ctx, x, o.y, x, o.y + 18, p.color, 4);
     }
-    ctx.fillStyle = scene.silhouette;
-    ctx.fill('evenodd');
-  } else if (scene.structure === 'terrace') {
-    ctx.fillRect(0, 330, SCENE_W, 10);
-    for (let i = 0; i < 16; i += 1) ctx.fillRect(12 + i * 38, 340, 9, 46);
-    ctx.fillRect(0, 386, SCENE_W, 10);
-    ctx.fillRect(18, 120, 20, 220);
-    ctx.fillRect(562, 120, 20, 220);
-    ctx.fillRect(0, 104, SCENE_W, 16);
-  } else if (scene.structure === 'tower') {
-    ctx.beginPath();
-    ctx.moveTo(60, 410);
-    ctx.lineTo(88, 150);
-    ctx.lineTo(132, 150);
-    ctx.lineTo(160, 410);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillRect(78, 128, 64, 24);
-    ctx.beginPath();
-    ctx.moveTo(72, 128);
-    ctx.lineTo(110, 92);
-    ctx.lineTo(148, 128);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillRect(430, 250, 170, 160);
-    ctx.beginPath();
-    ctx.moveTo(420, 250);
-    ctx.lineTo(515, 205);
-    ctx.lineTo(610, 250);
-    ctx.closePath();
-    ctx.fill();
-  } else {
-    // roofs: a skyline of rooftops, chimneys and a water tower
-    const base = 348;
-    const blocks = [[0, 90, 120], [105, 130, 95], [225, 80, 140], [345, 120, 100], [455, 85, 125], [565, 40, 110]];
-    for (const [x, w, h] of blocks) ctx.fillRect(x, base - h, w, h);
-    ctx.fillRect(140, base - 150, 14, 55);
-    ctx.fillRect(392, base - 145, 14, 45);
-    ctx.fillRect(492, base - 190, 46, 34);
-    ctx.fillRect(498, base - 156, 6, 30);
-    ctx.fillRect(526, base - 156, 6, 30);
-    ctx.fillRect(0, base, SCENE_W, 8);
-  }
+  },
 
-  // string lights sagging across the top of the scene
-  ctx.strokeStyle = 'rgba(12,14,20,0.8)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(-10, 26);
-  ctx.quadraticCurveTo(300, 92, 610, 20);
-  ctx.stroke();
-  const bulbs = 13;
-  for (let i = 0; i < bulbs; i += 1) {
-    const t = (i + 0.5) / bulbs;
-    const x = -10 + 620 * t;
-    const y = 26 + (20 - 26) * t + Math.sin(Math.PI * t) * 44 + 4;
-    circle(ctx, x, y, 3.4, i % 2 ? '#ffd678' : '#ff9d76');
-  }
+  boat(ctx, o, p) {
+    const s = p.size || 100;
+    ctx.beginPath();
+    ctx.moveTo(o.x - s / 2, o.y - 8);
+    ctx.lineTo(o.x + s / 2, o.y - 8);
+    ctx.lineTo(o.x + s * 0.34, o.y + 16);
+    ctx.lineTo(o.x - s * 0.34, o.y + 16);
+    ctx.closePath();
+    ctx.fillStyle = p.color;
+    ctx.fill();
+    line(ctx, o.x, o.y - 8, o.x, o.y - s * 0.52, '#4a3b28', 4);
+    ctx.beginPath();
+    ctx.moveTo(o.x, o.y - s * 0.52);
+    ctx.lineTo(o.x, o.y - 12);
+    ctx.lineTo(o.x + s * 0.26, o.y - 12);
+    ctx.closePath();
+    ctx.fillStyle = '#e8e0c8';
+    ctx.fill();
+  },
 
-  if (scene.water) {
-    const water = ctx.createLinearGradient(0, 396, 0, SCENE_H);
-    water.addColorStop(0, scene.water);
-    water.addColorStop(1, '#0a1626');
-    ctx.fillStyle = water;
-    ctx.fillRect(0, 396, SCENE_W, SCENE_H - 396);
-    ctx.strokeStyle = 'rgba(190,230,255,0.35)';
-    ctx.lineWidth = 1.6;
-    const wrand = seededRandom(scene.seed + 7);
-    for (let i = 0; i < 12; i += 1) {
-      const y = 404 + wrand() * 40;
-      const x = wrand() * 520;
-      const len = 24 + wrand() * 60;
+  moon(ctx, o, p) {
+    const s = p.size || 24;
+    circle(ctx, o.x, o.y, s, p.color);
+    circle(ctx, o.x + s * 0.45, o.y - s * 0.3, s * 0.78, 'rgba(20,28,54,0.92)');
+  },
+
+  star(ctx, o, p) {
+    const n = p.count || 4;
+    const spread = p.spread || 50;
+    ctx.fillStyle = p.color;
+    for (let i = 0; i < n; i += 1) {
+      const dx = ((i * 37) % spread) - spread / 2;
+      const dy = ((i * 23) % 30) - 15;
+      const r = 2 + ((i * 7) % 3);
+      const x = o.x + dx;
+      const y = o.y + dy;
       ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(x + len, y);
+      ctx.moveTo(x, y - r * 2);
+      ctx.lineTo(x + r * 0.6, y - r * 0.6);
+      ctx.lineTo(x + r * 2, y);
+      ctx.lineTo(x + r * 0.6, y + r * 0.6);
+      ctx.lineTo(x, y + r * 2);
+      ctx.lineTo(x - r * 0.6, y + r * 0.6);
+      ctx.lineTo(x - r * 2, y);
+      ctx.lineTo(x - r * 0.6, y - r * 0.6);
+      ctx.closePath();
+      ctx.fill();
+    }
+  },
+
+  cloud(ctx, o, p) {
+    const s = p.size || 64;
+    ctx.fillStyle = p.color;
+    for (const [dx, dy, r] of [[-0.3, 0.08, 0.26], [0, -0.08, 0.34], [0.3, 0.06, 0.27], [0.05, 0.14, 0.3]]) {
+      ctx.beginPath();
+      ctx.arc(o.x + dx * s, o.y + dy * s, r * s, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  },
+
+  steam(ctx, o, p) {
+    const n = p.count || 3;
+    ctx.strokeStyle = p.color;
+    ctx.globalAlpha = 0.75;
+    ctx.lineWidth = 4;
+    for (let i = 0; i < n; i += 1) {
+      const x = o.x + (i - (n - 1) / 2) * 16;
+      ctx.beginPath();
+      ctx.moveTo(x, o.y + 16);
+      ctx.bezierCurveTo(x - 8, o.y + 2, x + 8, o.y - 8, x, o.y - 24);
       ctx.stroke();
     }
-  } else {
-    ctx.fillStyle = 'rgba(0,0,0,0.28)';
-    ctx.fillRect(0, 410, SCENE_W, 40);
-    ctx.fillStyle = 'rgba(255,255,255,0.07)';
-    ctx.fillRect(0, 410, SCENE_W, 3);
+    ctx.globalAlpha = 1;
+  },
+
+  leaf(ctx, o, p) {
+    const n = p.count || 3;
+    for (let i = 0; i < n; i += 1) {
+      const x = o.x + (i - (n - 1) / 2) * 20;
+      const y = o.y + ((i * 13) % 12) - 6;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(-0.5 + (i % 3) * 0.4);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 6, 12, 0, 0, Math.PI * 2);
+      ctx.fillStyle = p.color;
+      ctx.fill();
+      ctx.restore();
+    }
+  },
+
+  book(ctx, o, p) {
+    const s = p.size || 32;
+    ctx.save();
+    ctx.translate(o.x, o.y);
+    ctx.rotate(-0.08);
+    rect(ctx, -s / 2, -s * 0.4, s, s * 0.8, p.color);
+    rect(ctx, -s / 2, -s * 0.4, 6, s * 0.8, 'rgba(0,0,0,0.35)');
+    rect(ctx, -s * 0.2, -s * 0.22, s * 0.55, 5, 'rgba(255,240,200,0.75)');
+    rect(ctx, -s * 0.2, -s * 0.02, s * 0.55, 5, 'rgba(255,240,200,0.55)');
+    rect(ctx, -s * 0.2, s * 0.18, s * 0.4, 5, 'rgba(255,240,200,0.4)');
+    ctx.restore();
+  },
+
+  bell(ctx, o, p) {
+    const s = p.size || 24;
+    ctx.beginPath();
+    ctx.moveTo(o.x - s * 0.55, o.y + s * 0.4);
+    ctx.quadraticCurveTo(o.x - s * 0.5, o.y - s * 0.5, o.x, o.y - s * 0.55);
+    ctx.quadraticCurveTo(o.x + s * 0.5, o.y - s * 0.5, o.x + s * 0.55, o.y + s * 0.4);
+    ctx.closePath();
+    ctx.fillStyle = p.color;
+    ctx.fill();
+    rect(ctx, o.x - s * 0.66, o.y + s * 0.4, s * 1.32, 5, 'rgba(0,0,0,0.3)');
+    circle(ctx, o.x, o.y + s * 0.62, 4.5, '#8a6a20');
+    circle(ctx, o.x, o.y - s * 0.68, 4, p.color);
+  },
+
+  banner(ctx, o, p) {
+    const s = p.size || 50;
+    line(ctx, o.x - s * 0.7, o.y - s * 0.6, o.x + s * 0.7, o.y - s * 0.6, '#3a3125', 3);
+    ctx.beginPath();
+    ctx.moveTo(o.x - s / 2, o.y - s * 0.6);
+    ctx.lineTo(o.x + s / 2, o.y - s * 0.6);
+    ctx.lineTo(o.x + s / 2, o.y + s * 0.4);
+    ctx.lineTo(o.x, o.y + s * 0.72);
+    ctx.lineTo(o.x - s / 2, o.y + s * 0.4);
+    ctx.closePath();
+    ctx.fillStyle = p.color;
+    ctx.fill();
+    circle(ctx, o.x, o.y - s * 0.05, s * 0.16, 'rgba(255,233,168,0.85)');
+  },
+
+  pipe(ctx, o, p) {
+    const s = p.size || 100;
+    rect(ctx, o.x - 9, o.y - s / 2, 18, s, p.color);
+    rect(ctx, o.x - 14, o.y - s / 2, 28, 12, 'rgba(0,0,0,0.3)');
+    rect(ctx, o.x - 14, o.y + s / 2 - 12, 28, 12, 'rgba(0,0,0,0.3)');
+    rect(ctx, o.x - 9, o.y - 4, 18, 8, 'rgba(255,255,255,0.18)');
+  },
+
+  orb(ctx, o, p) {
+    const s = p.size || 16;
+    const g = ctx.createRadialGradient(o.x - s * 0.3, o.y - s * 0.3, 2, o.x, o.y, s);
+    g.addColorStop(0, '#ffffff');
+    g.addColorStop(0.35, p.color);
+    g.addColorStop(1, 'rgba(10,16,30,0.55)');
+    circle(ctx, o.x, o.y, s, g);
+    line(ctx, o.x - s - 8, o.y + s + 8, o.x + s + 8, o.y + s + 8, '#5e4a22', 3);
+  },
+});
+
+/** The painter kinds this module can draw (23). */
+export const PAINTER_KINDS = Object.keys(PAINTERS);
+
+/** Effective object list for one side: 0 = left (original), 1 = right (altered). */
+export function effectiveObjects(scene, side) {
+  const out = [];
+  for (const o of scene.objects) {
+    let diff = null;
+    for (const d of scene.diffs) if (d.target === o.id) diff = d;
+    if (side === 0 && o.p.onlyRight) continue;
+    if (side === 1 && diff && diff.mode === 'removed') continue;
+    if (side === 0) { out.push({ o, p: o.p, flip: false }); continue; }
+    const p = Object.assign({}, o.p);
+    let flip = false;
+    if (diff) {
+      if (diff.mode === 'color') p.color = diff.color;
+      if (diff.mode === 'flip') flip = true;
+      if (diff.mode === 'param' && diff.set) Object.assign(p, diff.set);
+    }
+    out.push({ o, p, flip });
+  }
+  return out;
+}
+
+/** Paint the backdrop: night sky, skyline silhouette and flood water. */
+export function paintBackdrop(ctx, scene) {
+  const g = ctx.createLinearGradient(0, 0, 0, PANEL_H);
+  g.addColorStop(0, scene.sky);
+  g.addColorStop(0.72, '#24344f');
+  g.addColorStop(0.721, scene.water);
+  g.addColorStop(1, scene.water);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, PANEL_W, PANEL_H);
+  ctx.fillStyle = 'rgba(6,10,20,0.55)';
+  for (let i = 0; i < 9; i += 1) {
+    const w = 46 + ((i * 53) % 40);
+    const h = 60 + ((i * 37) % 70);
+    ctx.fillRect(i * 68 - 6, 376 - h, w, h);
+  }
+  ctx.strokeStyle = 'rgba(190,230,240,0.25)';
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 5; i += 1) {
+    const y = 404 + i * 24;
+    ctx.beginPath();
+    for (let x = 0; x <= PANEL_W; x += 16) {
+      const yy = y + Math.sin((x + i * 40) / 34) * 3;
+      if (x === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+    }
+    ctx.stroke();
   }
 }
 
-/**
- * Paint a whole panel. `side` is 'left' or 'right'; on the right the scene's
- * differences are applied. `foundIds` draws the ring markers, `hint` pulses.
- */
-export function drawScene(ctx, scene, side, foundIds, hintId, nowMs) {
-  ctx.clearRect(0, 0, SCENE_W, SCENE_H);
-  drawBackground(ctx, scene);
-  const diffByObject = new Map();
-  for (const diff of scene.diffs) diffByObject.set(diff.obj, diff);
-  for (const o of scene.objects) {
-    const diff = diffByObject.get(o.id);
-    if (side === 'right' && diff?.type === 'removed') continue;
-    if (side === 'left' && diff?.type === 'extra') continue;
-    const variant = side === 'right' ? variantOf(o, diff) : o;
-    drawObject(ctx, variant);
-  }
-  // found markers: a satisfying double ring with a check, gently pulsing
-  for (const diff of scene.diffs) {
-    if (!foundIds.has(diff.id)) continue;
-    const pulse = 1 + Math.sin(nowMs / 280) * 0.05;
+/** Draw one full panel (side 0 or 1) of a scene into ctx at panel size. */
+export function drawPanel(ctx, scene, side) {
+  paintBackdrop(ctx, scene);
+  for (const item of effectiveObjects(scene, side)) {
+    const painter = PAINTERS[item.o.kind];
+    if (!painter) continue;
     ctx.save();
-    ctx.translate(diff.x, diff.y);
-    ctx.scale(pulse, pulse);
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = '#51e07a';
-    ctx.beginPath();
-    ctx.arc(0, 0, diff.r + 7, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-    ctx.beginPath();
-    ctx.arc(0, 0, diff.r + 12, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.strokeStyle = '#eafff0';
-    ctx.lineWidth = 4.5;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(-diff.r * 0.42, 0);
-    ctx.lineTo(-diff.r * 0.12, diff.r * 0.34);
-    ctx.lineTo(diff.r * 0.46, -diff.r * 0.32);
-    ctx.stroke();
-    ctx.restore();
-  }
-  // hint pulse: expanding rings around the hinted difference
-  if (hintId) {
-    const diff = scene.diffs.find((d) => d.id === hintId);
-    if (diff) {
-      const phase = (nowMs % 900) / 900;
-      for (let k = 0; k < 2; k += 1) {
-        const p = (phase + k * 0.5) % 1;
-        ctx.save();
-        ctx.globalAlpha = 1 - p;
-        ctx.lineWidth = 4;
-        ctx.strokeStyle = '#ffd94d';
-        ctx.beginPath();
-        ctx.arc(diff.x, diff.y, diff.r + 6 + p * 30, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.restore();
-      }
+    if (item.flip) {
+      ctx.translate(item.o.x * 2, 0);
+      ctx.scale(-1, 1);
     }
+    painter(ctx, item.o, item.p);
+    ctx.restore();
   }
 }

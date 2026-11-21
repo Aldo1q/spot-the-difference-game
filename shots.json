@@ -1,1 +1,1 @@
-[{"name":"1-cover.jpg","query":"?shot=cover&seed=1"},{"name":"2-map.jpg","query":"?shot=map&seed=1"},{"name":"3-zoom.jpg","query":"?shot=zoom&seed=1"},{"name":"4-clear.jpg","query":"?shot=win&seed=1"}]
+[{"name":"1-cover.jpg","query":"?shot=cover"},{"name":"2-map.jpg","query":"?shot=map"},{"name":"3-zoom.jpg","query":"?shot=zoom"},{"name":"4-clear.jpg","query":"?shot=clear"}]

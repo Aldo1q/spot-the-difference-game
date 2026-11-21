@@ -1,113 +1,106 @@
-// Tideglass Observatory — WebAudio synth: every sound is generated, no files.
-// A soft harbour ambience (filtered noise + slow bell swells) sits under short
-// chimes for finds, a dull thud for mistakes, a harp gliss for hints and a
-// small fanfare when a scene is cleared.
+// Tideglass Observatory — WebAudio synth: every sound is generated, no
+// audio files. Short blips for play feedback plus a quiet two-oscillator
+// night-water ambience that runs under the game until muted.
 
-export class SoundBank {
-  constructor() {
-    this.ctx = null;
-    this.muted = false;
-    this.ambienceNodes = [];
-  }
+let ctx = null;
+let master = null;
+let ambienceNodes = null;
+let muted = false;
 
-  ensure() {
-    if (this.ctx) {
-      if (this.ctx.state === 'suspended') this.ctx.resume();
-      return this.ctx;
-    }
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return null;
-    this.ctx = new AC();
-    this.master = this.ctx.createGain();
-    this.master.gain.value = 0.5;
-    this.master.connect(this.ctx.destination);
-    return this.ctx;
-  }
+function ensureContext() {
+  if (ctx) return true;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return false;
+  ctx = new AC();
+  master = ctx.createGain();
+  master.gain.value = muted ? 0 : 0.5;
+  master.connect(ctx.destination);
+  return true;
+}
 
-  tone(freq, start, dur, type = 'sine', vol = 0.2, slideTo = null) {
-    if (!this.ensure() || this.muted) return;
-    const t0 = this.ctx.currentTime + start;
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq, t0);
-    if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
-    gain.gain.setValueAtTime(0, t0);
-    gain.gain.linearRampToValueAtTime(vol, t0 + 0.012);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-    osc.connect(gain).connect(this.master);
-    osc.start(t0);
-    osc.stop(t0 + dur + 0.05);
-  }
+function tone(freq, start, dur, type, vol, slideTo) {
+  if (!ensureContext()) return;
+  const t0 = ctx.currentTime + start;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = type || 'sine';
+  osc.frequency.setValueAtTime(freq, t0);
+  if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+  gain.gain.setValueAtTime(0.0001, t0);
+  gain.gain.exponentialRampToValueAtTime(vol || 0.2, t0 + 0.015);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  osc.connect(gain);
+  gain.connect(master);
+  osc.start(t0);
+  osc.stop(t0 + dur + 0.05);
+}
 
-  /** Two-note bell chime; the pitch climbs with the current streak. */
-  playFind(streak) {
-    const base = 660 * Math.pow(1.059, Math.min(streak, 8));
-    this.tone(base, 0, 0.35, 'sine', 0.22);
-    this.tone(base * 1.5, 0.07, 0.45, 'sine', 0.18);
-    this.tone(base * 2, 0.14, 0.5, 'triangle', 0.1);
-  }
+/** Bright two-note chime when a difference is found. */
+export function playFound(streak) {
+  const base = 620 + Math.min(streak, 6) * 60;
+  tone(base, 0, 0.16, 'sine', 0.25);
+  tone(base * 1.5, 0.07, 0.22, 'sine', 0.22);
+}
 
-  playMistake() {
-    this.tone(150, 0, 0.22, 'square', 0.12, 90);
-    this.tone(98, 0.02, 0.25, 'sine', 0.16, 70);
-  }
+/** Low buzz when a click misses: the mistake penalty sound. */
+export function playMistake() {
+  tone(150, 0, 0.22, 'sawtooth', 0.12, 90);
+}
 
-  playHint() {
-    [523, 659, 784, 1047].forEach((f, i) => this.tone(f, i * 0.09, 0.4, 'triangle', 0.12));
-  }
+/** Soft ping when a hint ring is shown. */
+export function playHint() {
+  tone(980, 0, 0.3, 'triangle', 0.16, 720);
+}
 
-  playClick() {
-    this.tone(880, 0, 0.06, 'triangle', 0.08);
-  }
+/** Tiny click for buttons and map movement. */
+export function playClick() {
+  tone(440, 0, 0.06, 'square', 0.06);
+}
 
-  playSceneClear() {
-    [392, 523, 659, 784, 1047].forEach((f, i) => this.tone(f, i * 0.11, 0.55, 'sine', 0.16));
-    this.tone(1319, 0.58, 0.8, 'triangle', 0.12);
-  }
+/** Rising arpeggio for a cleared scene. */
+export function playClear() {
+  [523, 659, 784, 1046].forEach((f, i) => tone(f, i * 0.09, 0.24, 'triangle', 0.2));
+}
 
-  playFail() {
-    [440, 349, 262, 196].forEach((f, i) => this.tone(f, i * 0.16, 0.4, 'sawtooth', 0.07));
-  }
+/** Falling pair for a lost scene. */
+export function playLose() {
+  tone(392, 0, 0.3, 'triangle', 0.2);
+  tone(262, 0.22, 0.45, 'triangle', 0.2);
+}
 
-  playCampaignWin() {
-    [523, 659, 784, 1047, 784, 1047, 1319, 1568].forEach((f, i) => this.tone(f, i * 0.13, 0.6, 'sine', 0.15));
-  }
+/** Start the looping ambience (idempotent; needs a user gesture first). */
+export function startAmbience() {
+  if (!ensureContext() || ambienceNodes) return;
+  const gain = ctx.createGain();
+  gain.gain.value = 0.035;
+  const o1 = ctx.createOscillator();
+  o1.type = 'sine';
+  o1.frequency.value = 110;
+  const o2 = ctx.createOscillator();
+  o2.type = 'sine';
+  o2.frequency.value = 165.5;
+  const lfo = ctx.createOscillator();
+  lfo.frequency.value = 0.09;
+  const lfoGain = ctx.createGain();
+  lfoGain.gain.value = 0.014;
+  lfo.connect(lfoGain);
+  lfoGain.connect(gain.gain);
+  o1.connect(gain);
+  o2.connect(gain);
+  gain.connect(master);
+  o1.start();
+  o2.start();
+  lfo.start();
+  ambienceNodes = { gain, o1, o2, lfo };
+}
 
-  /** Gentle water-and-wind loop, started on the first user gesture. */
-  startAmbience() {
-    if (!this.ensure() || this.ambienceNodes.length) return;
-    const ctx = this.ctx;
-    const len = ctx.sampleRate * 2;
-    const buffer = ctx.createBuffer(1, len, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    let last = 0;
-    for (let i = 0; i < len; i += 1) {
-      const white = Math.random() * 2 - 1;
-      last = (last + 0.02 * white) / 1.02;
-      data[i] = last * 3.2;
-    }
-    const src = ctx.createBufferSource();
-    src.buffer = buffer;
-    src.loop = true;
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = 420;
-    const gain = ctx.createGain();
-    gain.gain.value = 0.05;
-    const lfo = ctx.createOscillator();
-    lfo.frequency.value = 0.09;
-    const lfoGain = ctx.createGain();
-    lfoGain.gain.value = 0.025;
-    lfo.connect(lfoGain).connect(gain.gain);
-    src.connect(filter).connect(gain).connect(this.master);
-    src.start();
-    lfo.start();
-    this.ambienceNodes = [src, lfo];
-  }
+/** Toggle mute; returns the new muted state. */
+export function toggleMute() {
+  muted = !muted;
+  if (master && ctx) master.gain.setValueAtTime(muted ? 0 : 0.5, ctx.currentTime);
+  return muted;
+}
 
-  setMuted(muted) {
-    this.muted = muted;
-    if (this.master) this.master.gain.value = muted ? 0 : 0.5;
-  }
+export function isMuted() {
+  return muted;
 }
